@@ -1,1 +1,101 @@
+import os
+import yaml
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
+# Load .env
+load_dotenv()
+
+app = FastAPI()
+
+# Allow CORS for the grader
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ----------------------
+# Default configuration
+# ----------------------
+config = {
+    "port": 8000,
+    "workers": 1,
+    "debug": False,
+    "log_level": "info",
+    "api_key": "default-secret-000",
+}
+
+# ----------------------
+# YAML layer
+# ----------------------
+if os.path.exists("config.development.yaml"):
+    with open("config.development.yaml", "r") as f:
+        yaml_config = yaml.safe_load(f) or {}
+        config.update(yaml_config)
+
+# ----------------------
+# .env layer
+# ----------------------
+env_mapping = {
+    "APP_PORT": "port",
+    "NUM_WORKERS": "workers",
+    "APP_DEBUG": "debug",
+    "APP_LOG_LEVEL": "log_level",
+    "APP_API_KEY": "api_key",
+}
+
+def to_bool(value):
+    return str(value).strip().lower() in ["true", "1", "yes", "on"]
+
+for env_var, key in env_mapping.items():
+    value = os.getenv(env_var)
+    if value is not None:
+        if key in ["port", "workers"]:
+            config[key] = int(value)
+        elif key == "debug":
+            config[key] = to_bool(value)
+        else:
+            config[key] = value
+
+# ----------------------
+# OS Environment (APP_*)
+# ----------------------
+for key, value in os.environ.items():
+    if key == "APP_PORT":
+        config["port"] = int(value)
+    elif key == "APP_DEBUG":
+        config["debug"] = to_bool(value)
+    elif key == "APP_LOG_LEVEL":
+        config["log_level"] = value
+    elif key == "APP_API_KEY":
+        config["api_key"] = value
+
+# ----------------------
+# Endpoint
+# ----------------------
+@app.get("/effective-config")
+def effective_config(set: list[str] = Query(default=[])):
+    result = config.copy()
+
+    # Apply CLI overrides
+    for item in set:
+        if "=" not in item:
+            continue
+
+        key, value = item.split("=", 1)
+
+        if key in ["port", "workers"]:
+            result[key] = int(value)
+        elif key == "debug":
+            result[key] = to_bool(value)
+        else:
+            result[key] = value
+
+    # Always mask api_key
+    result["api_key"] = "****"
+
+    return result
